@@ -12,7 +12,7 @@ BOT_TOKEN = '8984791001:AAEWdpO_Qfgw3d10S69QsMSWkk5SUZwktR8'
 TARGET_CHANNEL = '@mycoures123'
 
 bot = telebot.TeleBot(BOT_TOKEN)
-app = Flask(name)
+app = Flask(__name__)
 
 # Render के लिए वेब सर्वर रूट
 @app.route('/')
