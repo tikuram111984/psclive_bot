@@ -236,7 +236,7 @@ def upload_pdf_to_channel(message):
 def run_bot():
     bot.infinity_polling()
 
-# बॉट को अलग बैकग्राउंड थ्रेड में चालू करना
+# बैकग्राउंड थ्रेड में बॉट चालू करना
 t = threading.Thread(target=run_bot)
 t.daemon = True
 t.start()
@@ -244,25 +244,5 @@ t.start()
 if name == 'main':
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port)
-            )
-            
-            bot.send_message(chat_id, f"✅ सफलता! {file_name} सफलतापूर्वक आपके चैनल पर भेज दी गई है।\n\nअगली PDF का नंबर भेजें या /start करें।", parse_mode='Markdown')
-        else:
-            bot.send_message(chat_id, f"❌ PDF डाउनलोड विफल (Status Code: {r.status_code})।")
-            
-    except Exception as e:
-        bot.send_message(chat_id, f"❌ अपलोड एरर: {str(e)}")
-
-def run_bot():
-    bot.infinity_polling()
-
-if name == 'main':
-    # बॉट को अलग थ्रेड में बैकग्राउंड में चलाना
-    t = threading.Thread(target=run_bot)
-    t.daemon = True
-    t.start()
     
-    # Render के पोर्ट पर वेब सर्वर चालू करना
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port)
             
