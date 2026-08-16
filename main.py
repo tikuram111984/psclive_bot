@@ -11,7 +11,7 @@ BOTTOKEN = '8984791001:AAEWdpO_Qfgw3d10S69QsMSWkk5SUZwktR8'
 TARGETCHANNEL = '@mycoures123'
 
 bot = telebot.TeleBot(BOTTOKEN)
-app = Flask(name)
+app = Flask("bot")
 
 @app.route('/')
 def index():
