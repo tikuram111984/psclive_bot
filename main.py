@@ -11,7 +11,7 @@ BOT_TOKEN = '8984791001:AAEWdpO_Qfgw3d10S69QsMSWkk5SUZwktR8'
 CHANNEL_ID = -1003946396225
 
 bot = telebot.TeleBot(BOT_TOKEN)
-app = Flask(__name__)
+app = Flask(name)
 
 # Render के लिए डमी वेब सर्वर
 @app.route('/')
@@ -224,6 +224,26 @@ def upload_pdf_to_channel(message):
                 chat_id=CHANNEL_ID,
                 document=pdf_bytes,
                 caption=f"📚 {file_name}\n\nUploaded via PSCLive Bot"
+            )
+            
+            bot.send_message(chat_id, f"✅ सफलता! {file_name} सफलतापूर्वक आपके चैनल पर भेज दी गई है।\n\nअगली PDF का नंबर भेजें या /start करें।", parse_mode='Markdown')
+        else:
+            bot.send_message(chat_id, f"❌ PDF डाउनलोड विफल (Status Code: {r.status_code})।")
+            
+    except Exception as e:
+        bot.send_message(chat_id, f"❌ अपलोड एरर: {str(e)}")
+
+def run_bot():
+    bot.infinity_polling()
+
+# बॉट को अलग बैकग्राउंड थ्रेड में चालू करना
+t = threading.Thread(target=run_bot)
+t.daemon = True
+t.start()
+
+if name == 'main':
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port)
             )
             
             bot.send_message(chat_id, f"✅ सफलता! {file_name} सफलतापूर्वक आपके चैनल पर भेज दी गई है।\n\nअगली PDF का नंबर भेजें या /start करें।", parse_mode='Markdown')
