@@ -11,7 +11,7 @@ BOT_TOKEN = '8984791001:AAEWdpO_Qfgw3d10S69QsMSWkk5SUZwktR8'
 CHANNEL_ID = -1003946396225
 
 bot = telebot.TeleBot(BOT_TOKEN)
-app = Flask(name)
+app = Flask(__name__)
 
 # Render के लिए डमी वेब सर्वर
 @app.route('/')
