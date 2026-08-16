@@ -3,13 +3,20 @@ import requests
 import io
 import os
 import re
+import threading
+from flask import Flask
 
 # --- कॉन्फिगरेशन ---
 BOT_TOKEN = '8984791001:AAEWdpO_Qfgw3d10S69QsMSWkk5SUZwktR8'
-# प्राइवेट चैनल के लिए ID के आगे -100 लगाना जरूरी होता है
 CHANNEL_ID = -1003946396225
 
 bot = telebot.TeleBot(BOT_TOKEN)
+app = Flask(name)
+
+# Render के लिए डमी वेब सर्वर
+@app.route('/')
+def home():
+    return "PSCLive Bot is running smoothly on Render!"
 
 # यूजर सेशन डेटा स्टोर करने के लिए
 user_sessions = {}
@@ -70,7 +77,6 @@ def login_and_fetch_folders(message):
     session = requests.Session()
     session.headers.update(HEADERS)
     
-    # Classplus / Edtech API लॉगिन
     login_url = "https://api.classplusapp.com/v2/users/login"
     login_payload = {
         "email": username if "@" in username else "",
@@ -94,7 +100,6 @@ def login_and_fetch_folders(message):
         user_sessions[chat_id]['token'] = token
         session.headers.update({"x-access-token": token, "Authorization": f"Bearer {token}"})
         
-        # फोल्डर लिस्ट निकालना
         course_id = user_sessions[chat_id]['course_id']
         content_url = f"https://api.classplusapp.com/v2/course/content/get?courseId={course_id}&folderId=0"
         
@@ -105,4 +110,139 @@ def login_and_fetch_folders(message):
         folders = [item for item in items if item.get('type') == 'folder' or item.get('contentType') == 1]
         
         if not folders:
-            # बैकअप: अगर डायरेक्ट फाइल्स हों
+            folders = items
+            
+        if not folders:
+            bot.send_message(chat_id, "⚠️ इस कोर्स में कोई फोल्डर या फाइल्स नहीं मिलीं।")
+            return
+            
+        user_sessions[chat_id]['folders'] = folders
+        user_sessions[chat_id]['step'] = 'WAITING_FOLDER_CHOICE'
+        
+        msg_text = "📁 उपलब्ध फोल्डर्स की सूची:\n\n"
+        for idx, f in enumerate(folders, start=1):
+            name = f.get('name') or f.get('title') or f'Folder {idx}'
+            msg_text += f"{idx}. 📁 {name}\n"
+            
+        msg_text += "\n👉 जिस फोल्डर की PDF देखनी है, उसका नंबर टाइप करके भेजें (उदा. 1):"
+        bot.send_message(chat_id, msg_text, parse_mode='Markdown')
+        
+    except Exception as e:
+        bot.send_message(chat_id, f"❌ एरर: {str(e)}\nकृपया /start करके दोबारा प्रयास करें।")
+
+@bot.message_handler(func=lambda msg: user_sessions.get(msg.chat.id, {}).get('step') == 'WAITING_FOLDER_CHOICE')
+def select_folder(message):
+    chat_id = message.chat.id
+    choice = message.text.strip()
+    
+    if not choice.isdigit():
+        bot.send_message(chat_id, "❌ कृपया केवल नंबर भेजें (उदा. 1)।")
+        return
+        
+    idx = int(choice) - 1
+    folders = user_sessions[chat_id].get('folders', [])
+    
+    if idx < 0 or idx >= len(folders):
+        bot.send_message(chat_id, "❌ गलत नंबर! लिस्ट में दिए गए नंबरों में से चुनें।")
+        return
+        
+    selected_folder = folders[idx]
+    folder_id = selected_folder.get('id') or selected_folder.get('folderId')
+    
+    bot.send_message(chat_id, "⏳ फोल्डर की फाइल्स निकाली जा रही हैं...")
+    
+    token = user_sessions[chat_id]['token']
+    course_id = user_sessions[chat_id]['course_id']
+    
+    headers = HEADERS.copy()
+    headers.update({"x-access-token": token, "Authorization": f"Bearer {token}"})
+    
+    files_url = f"https://api.classplusapp.com/v2/course/content/get?courseId={course_id}&folderId={folder_id}"
+    
+    try:
+        res = requests.get(files_url, headers=headers, timeout=15)
+        f_data = res.json()
+        
+        items = f_data.get('data', {}).get('courseContent', [])
+        pdf_files = [item for item in items if item.get('type') == 'pdf' or item.get('contentType') == 2 or str(item.get('url', '')).endswith('.pdf')]
+        
+        if not pdf_files:
+            bot.send_message(chat_id, "⚠️ इस फोल्डर में कोई PDF फाइल नहीं मिली। दूसरा फोल्डर नंबर चुनें।")
+            return
+            
+        user_sessions[chat_id]['files'] = pdf_files
+        user_sessions[chat_id]['step'] = 'WAITING_FILE_CHOICE'
+        
+        msg_text = "📄 उपलब्ध PDF फाइल्स की सूची:\n\n"
+        for f_idx, f in enumerate(pdf_files, start=1):
+            name = f.get('name') or f.get('title') or f'PDF {f_idx}'
+            msg_text += f"{f_idx}. 📄 {name}\n"
+            
+        msg_text += "\n👉 चैनल पर अपलोड करने के लिए PDF का नंबर भेजें (उदा. 1):"
+        bot.send_message(chat_id, msg_text, parse_mode='Markdown')
+        
+    except Exception as e:
+        bot.send_message(chat_id, f"❌ फाइल्स निकालने में एरर: {str(e)}")
+
+@bot.message_handler(func=lambda msg: user_sessions.get(msg.chat.id, {}).get('step') == 'WAITING_FILE_CHOICE')
+def upload_pdf_to_channel(message):
+    chat_id = message.chat.id
+    choice = message.text.strip()
+    
+    if not choice.isdigit():
+        bot.send_message(chat_id, "❌ कृपया केवल नंबर भेजें (उदा. 1)।")
+        return
+        
+    idx = int(choice) - 1
+    files = user_sessions[chat_id].get('files', [])
+    
+    if idx < 0 or idx >= len(files):
+        bot.send_message(chat_id, "❌ गलत नंबर! लिस्ट में दिए गए नंबरों में से चुनें।")
+        return
+        
+    selected_file = files[idx]
+    file_name = selected_file.get('name') or selected_file.get('title') or "Notes.pdf"
+    if not file_name.endswith('.pdf'):
+        file_name += ".pdf"
+        
+    pdf_url = selected_file.get('url') or selected_file.get('fileUrl')
+    
+    bot.send_message(chat_id, f"⏳ {file_name} डाउनलोड होकर चैनल पर अपलोड हो रही है...", parse_mode='Markdown')
+    
+    token = user_sessions[chat_id]['token']
+    headers = HEADERS.copy()
+    headers.update({"x-access-token": token, "Authorization": f"Bearer {token}"})
+    
+    try:
+        r = requests.get(pdf_url, headers=headers, stream=True, timeout=60)
+        
+        if r.status_code == 200:
+            pdf_bytes = io.BytesIO(r.content)
+            pdf_bytes.name = file_name
+            
+            bot.send_document(
+                chat_id=CHANNEL_ID,
+                document=pdf_bytes,
+                caption=f"📚 {file_name}\n\nUploaded via PSCLive Bot"
+            )
+            
+            bot.send_message(chat_id, f"✅ सफलता! {file_name} सफलतापूर्वक आपके चैनल पर भेज दी गई है।\n\nअगली PDF का नंबर भेजें या /start करें।", parse_mode='Markdown')
+        else:
+            bot.send_message(chat_id, f"❌ PDF डाउनलोड विफल (Status Code: {r.status_code})।")
+            
+    except Exception as e:
+        bot.send_message(chat_id, f"❌ अपलोड एरर: {str(e)}")
+
+def run_bot():
+    bot.infinity_polling()
+
+if name == 'main':
+    # बॉट को अलग थ्रेड में बैकग्राउंड में चलाना
+    t = threading.Thread(target=run_bot)
+    t.daemon = True
+    t.start()
+    
+    # Render के पोर्ट पर वेब सर्वर चालू करना
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port)
+            
