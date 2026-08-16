@@ -110,8 +110,8 @@ def handle_login(message):
         if not folders:
             folders = items
             if not folders:
-            bot.send_message(chat_id, "⚠️ इस कोर्स में कोई फोल्डर या फाइल नहीं मिली।")
-            return
+                        bot.send_message(chat_id, "⚠️ इस कोर्स में कोई फोल्डर या फाइल नहीं मिली।")
+                        return
             
         user_sessions[chat_id]['folders'] = folders
         user_sessions[chat_id]['step'] = 'WAITING_FOLDER_CHOICE'
