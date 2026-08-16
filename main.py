@@ -115,10 +115,11 @@ def handletoken(message):
             
         msgtext += "\n👉 जिस फोल्डर/फाइल को खोलना है, उसका नंबर भेजें (उदा. 1):"
         bot.send_message(chatid, msgtext, parse_mode='Markdown')
-        
+
     except Exception as e:
         bot.send_message(chatid, f"❌ एरर: {str(e)}\nकृपया /start करके दोबारा प्रयास करें।")
-        @bot.message_handler(func=lambda msg: usersessions.get(msg.chat.id, {}).get('step') == 'WAITING_FOLDER')
+
+@bot.message_handler(func=lambda msg: usersessions.get(msg.chat.id, {}).get('step') == 'WAITING_FOLDER')
 def handlefolder(message):
     chatid = message.chat.id
     choice = message.text.strip()
