@@ -14,37 +14,25 @@ app = Flask("bot")
 
 @app.route('/')
 def index():
-    return "PSCLive Bot Running"
+    return "PSCLive Appx Bot Running"
 
 usersessions = {}
 
-APIHEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-    "Accept": "application/json, text/plain, */*",
-    "region": "IN"
-}
-
-def clean_name(item, idx):
-    for key in ['topicName', 'folderName', 'fileName', 'resourceName', 'title', 'name']:
-        if key in item and item[key]:
-            return str(item[key])
-    return f"Item_{idx}"
-
-def extract_items(resjson):
-    if isinstance(resjson, list):
-        return resjson
-    if isinstance(resjson, dict):
-        d = resjson.get('data', {})
-        if isinstance(d, list):
-            return d
-        if isinstance(d, dict):
-            for k in ['courseContent', 'contents', 'topics', 'list', 'data', 'files', 'materials']:
-                if k in d and isinstance(d[k], list) and len(d[k]) > 0:
-                    return d[k]
-        for k in ['courseContent', 'contents', 'topics', 'data', 'list']:
-            if k in resjson and isinstance(resjson[k], list):
-                return resjson[k]
-    return []
+def get_headers(token, userid="12913"):
+    return {
+        "accept": "*/*",
+        "accept-language": "en-GB,en-US;q=0.9,en;q=0.8",
+        "auth-key": "appxapi",
+        "authorization": token,
+        "client-service": "Appx",
+        "device-type": "",
+        "is-safari": "0",
+        "origin": "https://app.psclive.com",
+        "referer": "https://app.psclive.com/",
+        "source": "website",
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "user-id": str(userid)
+    }
 
 @bot.message_handler(commands=['start'])
 def handlestart(message):
@@ -69,7 +57,7 @@ def handleurl(message):
         
     usersessions[chatid]['courseid'] = courseid
     usersessions[chatid]['step'] = 'WAITING_TOKEN'
-    bot.send_message(chatid, f"✅ कोर्स ID: {courseid}\n\n2️⃣ अब अपना पूरा Token पेस्ट करके भेजें:")
+    bot.send_message(chatid, f"✅ कोर्स ID: {courseid}\n\n2️⃣ अब अपना Token भेजें:")
 
 @bot.message_handler(func=lambda msg: usersessions.get(msg.chat.id, {}).get('step') == 'WAITING_TOKEN')
 def handletoken(message):
@@ -83,54 +71,42 @@ def handletoken(message):
     usersessions[chatid]['token'] = token
     courseid = usersessions[chatid]['courseid']
     
-    bot.send_message(chatid, "⏳ टोकन वेरिफाई हो रहा है...")
+    bot.send_message(chatid, "⏳ फ़ोल्डर्स लोड किए जा रहे हैं...")
     
-    headers = APIHEADERS.copy()
-    headers.update({
-        "x-access-token": token,
-        "Authorization": f"Bearer {token}"
-    })
-    
-    contenturl = f"https://api.classplusapp.com/v2/course/content/get?courseId={courseid}&folderId=0"
+    headers = get_headers(token)
+    api_url = f"https://psclivepawansirapi.akamai.net.in/get/folder_contentsv3?course_id={courseid}&parent_id=-1&start=0"
     
     try:
-        res = requests.get(contenturl, headers=headers, timeout=30)
+        res = requests.get(api_url, headers=headers, timeout=25)
         raw_json = res.json()
         
-        if res.status_code != 200 or raw_json.get('status') == 'failure':
-            bot.send_message(chatid, f"❌ टोकन अमान्य या अधूरा है:\n{str(raw_json.get('message', 'Auth Failed'))}\nकृपया पूरा टोकन कॉपी करके भेजें।")
-            return
+        items = raw_json.get('data', [])
+        if not items and isinstance(raw_json, list):
+            items = raw_json
             
-        items = extract_items(raw_json)
-        
-        if len(items) == 1 and isinstance(items[0], dict):
-            pid = items[0].get('id') or items[0].get('_id') or items[0].get('folderId') or items[0].get('topicId') or 0
-            sub_url = f"https://api.classplusapp.com/v2/course/content/get?courseId={courseid}&folderId={pid}"
-            sub_res = requests.get(sub_url, headers=headers, timeout=30)
-            sub_items = extract_items(sub_res.json())
-            if sub_items:
-                items = sub_items
-                valid_items = [i for i in items if isinstance(i, dict)]
+        valid_items = [i for i in items if isinstance(i, dict)]
         if not valid_items:
-            bot.send_message(chatid, "⚠️ इस कोर्स में कोई सामग्री नहीं मिली।")
+            bot.send_message(chatid, f"⚠️ कोर्स में कोई सामग्री नहीं मिली या ऑथेंटिकेशन फेल हो गया।\nरिस्पॉन्स: {str(raw_json)[:200]}")
             return
             
-        usersessions[chatid]['folders'] = valid_items
-        usersessions[chatid]['step'] = 'WAITING_FOLDER'
+        usersessions[chatid]['items'] = valid_items
+        usersessions[chatid]['step'] = 'WAITING_CHOICE'
         
-        msgtext = "📁 उपलब्ध फ़ोल्डर्स:\n\n"
-        for idx, f in enumerate(valid_items, start=1):
-            name = clean_name(f, idx)
-            msgtext += f"{idx}. 📁 {name}\n"
+        msgtext = "📁 उपलब्ध फ़ोल्डर्स / सामग्री:\n\n"
+        for idx, item in enumerate(valid_items, start=1):
+            title = item.get('title') or item.get('topic_name') or item.get('name') or f"Item {idx}"
+            is_folder = item.get('is_folder') or (item.get('type') == 'folder')
+            icon = "📁" if is_folder else "📄"
+            msgtext += f"{idx}. {icon} {title}\n"
             
-        msgtext += "\n👉 फ़ोल्डर का नंबर भेजें:"
+        msgtext += "\n👉 खोलने या डाउनलोड करने के लिए नंबर भेजें:"
         bot.send_message(chatid, msgtext)
         
     except Exception as e:
         bot.send_message(chatid, f"❌ एरर: {str(e)}")
 
-@bot.message_handler(func=lambda msg: usersessions.get(msg.chat.id, {}).get('step') == 'WAITING_FOLDER')
-def handlefolder(message):
+@bot.message_handler(func=lambda msg: usersessions.get(msg.chat.id, {}).get('step') == 'WAITING_CHOICE')
+def handlechoice(message):
     chatid = message.chat.id
     choice = message.text.strip()
     
@@ -139,127 +115,88 @@ def handlefolder(message):
         return
         
     idx = int(choice) - 1
-    folders = usersessions[chatid].get('folders', [])
+    items = usersessions[chatid].get('items', [])
     
-    if idx < 0 or idx >= len(folders):
+    if idx < 0 or idx >= len(items):
         bot.send_message(chatid, "❌ गलत नंबर!")
         return
         
-    selectedfolder = folders[idx]
-    folderid = selectedfolder.get('id') or selectedfolder.get('_id') or selectedfolder.get('folderId') or selectedfolder.get('topicId') or selectedfolder.get('contentId') or 0
-    
-    bot.send_message(chatid, "⏳ फ़ाइलें निकाली जा रही हैं...")
-    
+    selected = items[idx]
     token = usersessions[chatid]['token']
     courseid = usersessions[chatid]['courseid']
+    headers = get_headers(token)
     
-    headers = APIHEADERS.copy()
-    headers.update({
-        "x-access-token": token,
-        "Authorization": f"Bearer {token}"
-    })
+    is_folder = selected.get('is_folder') or (selected.get('type') == 'folder') or ('parent_id' in selected and not selected.get('download_url'))
+    selected_id = selected.get('id') or selected.get('folder_id')
     
-    filesurl = f"https://api.classplusapp.com/v2/course/content/get?courseId={courseid}&folderId={folderid}"
-    
-    try:
-        res = requests.get(filesurl, headers=headers, timeout=30)
-        items = extract_items(res.json())
-        validfiles = [i for i in items if isinstance(i, dict)]
-        
-        if not validfiles:
-            bot.send_message(chatid, "⚠️ इस फ़ोल्डर में कोई फ़ाइल नहीं मिली।")
-            return
+    if is_folder:
+        bot.send_message(chatid, f"⏳ फ़ोल्डर खोला जा रहा है...")
+        sub_url = f"https://psclivepawansirapi.akamai.net.in/get/folder_contentsv3?course_id={courseid}&parent_id={selected_id}&start=0"
+        try:
+            res = requests.get(sub_url, headers=headers, timeout=25)
+            sub_items = res.json().get('data', [])
+            valid_sub = [i for i in sub_items if isinstance(i, dict)]
             
-        usersessions[chatid]['files'] = validfiles
-        usersessions[chatid]['step'] = 'WAITING_FILE'
-        
-        msgtext = "📄 उपलब्ध फ़ाइल्स:\n\n"
-        for fidx, f in enumerate(validfiles, start=1):
-            name = clean_name(f, fidx)
-            msgtext += f"{fidx}. 📄 {name}\n"
+            if not valid_sub:
+                bot.send_message(chatid, "⚠️ यह फ़ोल्डर खाली है।")
+                return
+                
+            usersessions[chatid]['items'] = valid_sub
             
-        msgtext += "\n👉 चैनल पर भेजने के लिए फ़ाइल का नंबर भेजें:"
-        bot.send_message(chatid, msgtext)
-        
-    except Exception as e:
-        bot.send_message(chatid, f"❌ एरर: {str(e)}")
+            msgtext = "📄 फ़ोल्डर की फ़ाइलें:\n\n"
+            for fidx, item in enumerate(valid_sub, start=1):
+                title = item.get('title') or item.get('topic_name') or item.get('name') or f"File {fidx}"
+                msgtext += f"{fidx}. 📄 {title}\n"
+                
+            msgtext += "\n👉 चैनल पर भेजने के लिए फ़ाइल का नंबर भेजें:"
+            bot.send_message(chatid, msgtext)
+        except Exception as e:
+            bot.send_message(chatid, f"❌ फ़ोल्डर एरर: {str(e)}")
+        return
 
-@bot.message_handler(func=lambda msg: usersessions.get(msg.chat.id, {}).get('step') == 'WAITING_FILE')
-def handleupload(message):
-    chatid = message.chat.id
-    choice = message.text.strip()
-    
-    if not choice.isdigit():
-        bot.send_message(chatid, "❌ केवल नंबर भेजें।")
-        return
+    # PDF / File Download Logic
+    file_title = selected.get('title') or selected.get('topic_name') or selected.get('name') or "Document"
+    if not file_title.lower().endswith('.pdf'):
+        file_title += ".pdf"
         
-    idx = int(choice) - 1
-    files = usersessions[chatid].get('files', [])
-    
-    if idx < 0 or idx >= len(files):
-        bot.send_message(chatid, "❌ गलत नंबर!")
-        return
-        
-    selectedfile = files[idx]
-    filename = clean_name(selectedfile, choice)
-    if not filename.lower().endswith('.pdf'):
-        filename += ".pdf"
-        
-    contentid = selectedfile.get('id') or selectedfile.get('_id') or selectedfile.get('contentId') or selectedfile.get('topicId')
-    courseid = usersessions[chatid]['courseid']
-    token = usersessions[chatid]['token']
-    
-    headers = APIHEADERS.copy()
-    headers.update({
-        "x-access-token": token,
-        "Authorization": f"Bearer {token}"
-    })
-    
-    pdfurl = (
-        selectedfile.get('url') or 
-        selectedfile.get('fileUrl') or 
-        selectedfile.get('documentUrl') or
-        selectedfile.get('downloadUrl')
+    pdf_url = (
+        selected.get('download_url') or 
+        selected.get('pdf_url') or 
+        selected.get('url') or 
+        selected.get('file_url') or 
+        selected.get('document_url')
     )
     
-    if not pdfurl and contentid:
-        url_apis = [
-            f"https://api.classplusapp.com/v2/course/content/url?courseId={courseid}&contentId={contentid}",
-            f"https://api.classplusapp.com/v2/course/content/loadUrl?courseId={courseid}&contentId={contentid}"
-        ]
-        for u_api in url_apis:
-            try:
-                u_res = requests.get(u_api, headers=headers, timeout=15)
-                u_data = u_res.json()
-                d_obj = u_data.get('data', {})
-                if isinstance(d_obj, dict):
-                    pdfurl = d_obj.get('url') or d_obj.get('fileUrl') or d_obj.get('signedUrl')
-                elif isinstance(d_obj, str) and d_obj.startswith('http'):
-                    pdfurl = d_obj
-                if pdfurl:
-                    break
-            except Exception:
-                continue
+    # अगर डायरेक्ट लिंक न हो तो फाइल डीटेल API चेक करें
+    if not pdf_url and selected_id:
+        try:
+            d_url = f"https://psclivepawansirapi.akamai.net.in/get/content_details?course_id={courseid}&content_id={selected_id}"
+            d_res = requests.get(d_url, headers=headers, timeout=15).json()
+            data_dict = d_res.get('data', {})
+            if isinstance(data_dict, dict):
+                pdf_url = data_dict.get('download_url') or data_dict.get('pdf_url') or data_dict.get('url')
+        except Exception:
+            pass
 
-    if not pdfurl:
-        bot.send_message(chatid, "❌ इस फ़ाइल का डाउनलोड लिंक नहीं मिला।")
+    if not pdf_url:
+        bot.send_message(chatid, f"❌ इस फ़ाइल का डाउनलोड लिंक नहीं मिला।")
         return
-        
-    bot.send_message(chatid, f"⏳ {filename} डाउनलोड होकर चैनल पर भेजी जा रही है...")
+
+    bot.send_message(chatid, f"⏳ {file_title} डाउनलोड करके चैनल पर भेजा जा रहा है...")
     
     try:
-        r = requests.get(pdfurl, headers=headers, stream=True, timeout=600)
+        r = requests.get(pdf_url, headers=headers, stream=True, timeout=600)
         if r.status_code == 200:
             pdfbytes = io.BytesIO(r.content)
-            pdfbytes.name = filename
+            pdfbytes.name = file_title
             
             bot.send_document(
                 chat_id=TARGETCHANNEL,
                 document=pdfbytes,
-                caption=f"📚 {filename}\n\nUploaded via PSCLive Bot",
+                caption=f"📚 {file_title}\n\nUploaded via PSCLive Bot",
                 timeout=600
             )
-            bot.send_message(chatid, f"✅ सफलता! {filename} चैनल पर भेज दी गई है।\n\n👉 अगली फ़ाइल का नंबर भेजें या /start करें।")
+            bot.send_message(chatid, f"✅ सफलता! {file_title} चैनल पर भेज दी गई है।\n\n👉 अगली फ़ाइल का नंबर भेजें या /start करें।")
         else:
             bot.send_message(chatid, f"❌ डाउनलोड विफल: Status {r.status_code}")
     except Exception as e:
