@@ -6,6 +6,7 @@ import re
 import threading
 from flask import Flask
 
+# --- कॉन्फिगरेशन ---
 BOTTOKEN = '8984791001:AAEWdpO_Qfgw3d10S69QsMSWkk5SUZwktR8'
 TARGETCHANNEL = '@mycoures123'
 
@@ -86,7 +87,7 @@ def handletoken(message):
     usersessions[chatid]['token'] = token
     courseid = usersessions[chatid]['courseid']
     
-    bot.send_message(chatid, "⏳ टोकन वेरिफाई हो रहा है और फोल्डर्स लोड हो रहे हैं...")
+    bot.send_message(chatid, "⏳ टोकन वेरिफाई हो रहा है और सभी फ़ोल्डर्स लोड हो रहे हैं...")
     
     headers = APIHEADERS.copy()
     headers.update({
@@ -100,6 +101,15 @@ def handletoken(message):
         res = requests.get(contenturl, headers=headers, timeout=30)
         items = extractitems(res.json())
         
+        # अगर सिर्फ 1 मुख्य फ़ोल्डर आए, तो उसके अंदर के सारे सब-फ़ोल्डर्स निकालें
+        if len(items) == 1 and isinstance(items[0], dict):
+            parent_id = items[0].get('id') or items[0].get('_id') or items[0].get('folderId') or items[0].get('topicId') or 0
+            sub_url = f"https://api.classplusapp.com/v2/course/content/get?courseId={courseid}&folderId={parent_id}"
+            sub_res = requests.get(sub_url, headers=headers, timeout=30)
+            sub_items = extractitems(sub_res.json())
+            if sub_items:
+                items = sub_items
+
         valid_items = [i for i in items if isinstance(i, dict)]
         if not valid_items:
             bot.send_message(chatid, "⚠️ इस कोर्स में कोई सामग्री नहीं मिली।")
@@ -108,14 +118,14 @@ def handletoken(message):
         usersessions[chatid]['folders'] = valid_items
         usersessions[chatid]['step'] = 'WAITING_FOLDER'
         
-        msgtext = "📁 उपलब्ध सामग्री / फोल्डर्स:\n\n"
+        msgtext = "📁 उपलब्ध फ़ोल्डर्स की सूची:\n\n"
         for idx, f in enumerate(valid_items, start=1):
-            name = f.get('name') or f.get('title') or f.get('topicName') or f.get('folderName') or f'Item {idx}'
+            name = f.get('topicName') or f.get('folderName') or f.get('title') or f.get('name') or f'Folder {idx}'
             msgtext += f"{idx}. 📁 {name}\n"
             
-        msgtext += "\n👉 जिस फोल्डर/फाइल को खोलना है, उसका नंबर भेजें (उदा. 1):"
+        msgtext += "\n👉 जिस फ़ोल्डर को खोलना है, उसका नंबर भेजें (उदा. 1):"
         bot.send_message(chatid, msgtext, parse_mode='Markdown')
-
+        
     except Exception as e:
         bot.send_message(chatid, f"❌ एरर: {str(e)}\nकृपया /start करके दोबारा प्रयास करें।")
 
@@ -138,16 +148,7 @@ def handlefolder(message):
     selectedfolder = folders[idx]
     folderid = selectedfolder.get('id') or selectedfolder.get('_id') or selectedfolder.get('folderId') or selectedfolder.get('topicId') or selectedfolder.get('contentId') or 0
     
-    # अगर यह सीधे फ़ाइल ही है
-    direct_url = selectedfolder.get('url') or selectedfolder.get('fileUrl') or selectedfolder.get('documentUrl') or selectedfolder.get('downloadUrl')
-    if direct_url and (selectedfolder.get('type') == 'pdf' or str(direct_url).lower().endswith('.pdf')):
-        usersessions[chatid]['files'] = [selectedfolder]
-        usersessions[chatid]['step'] = 'WAITING_FILE'
-        name = selectedfolder.get('name') or selectedfolder.get('title') or 'Notes.pdf'
-        bot.send_message(chatid, f"📄 यह सीधी PDF फाइल है:\n\n1. 📄 {name}\n\n👉 अपलोड करने के लिए 1 भेजें:")
-        return
-
-    bot.send_message(chatid, "⏳ फाइल्स निकाली जा रही हैं...")
+    bot.send_message(chatid, "⏳ फ़ोल्डर की फ़ाइलें निकाली जा रही हैं...")
     
     token = usersessions[chatid]['token']
     courseid = usersessions[chatid]['courseid']
@@ -164,24 +165,21 @@ def handlefolder(message):
         res = requests.get(filesurl, headers=headers, timeout=30)
         items = extractitems(res.json())
         
-        validfiles = []
-        for i in items:
-            if isinstance(i, dict):
-                validfiles.append(i)
+        validfiles = [i for i in items if isinstance(i, dict)]
                 
         if not validfiles:
-            bot.send_message(chatid, "⚠️ इस फोल्डर में कोई फाइल्स नहीं मिलीं।")
+            bot.send_message(chatid, "⚠️ इस फ़ोल्डर में कोई फ़ाइल नहीं मिली।")
             return
             
         usersessions[chatid]['files'] = validfiles
         usersessions[chatid]['step'] = 'WAITING_FILE'
         
-        msgtext = "📄 उपलब्ध फाइल्स:\n\n"
+        msgtext = "📄 उपलब्ध फ़ाइल्स:\n\n"
         for fidx, f in enumerate(validfiles, start=1):
-            name = f.get('name') or f.get('title') or f.get('topicName') or f.get('fileName') or f'File {fidx}'
+            name = f.get('topicName') or f.get('fileName') or f.get('title') or f.get('name') or f'File {fidx}'
             msgtext += f"{fidx}. 📄 {name}\n"
             
-        msgtext += "\n👉 चैनल पर अपलोड करने के लिए फाइल का नंबर भेजें (उदा. 1):"
+        msgtext += "\n👉 चैनल पर अपलोड करने के लिए फ़ाइल का नंबर भेजें (उदा. 1):"
         bot.send_message(chatid, msgtext, parse_mode='Markdown')
         
     except Exception as e:
@@ -204,23 +202,38 @@ def handleupload(message):
         return
         
     selectedfile = files[idx]
-    filename = selectedfile.get('name') or selectedfile.get('title') or selectedfile.get('topicName') or "Notes.pdf"
+    filename = selectedfile.get('topicName') or selectedfile.get('fileName') or selectedfile.get('name') or selectedfile.get('title') or f"File_{choice}.pdf"
     if not filename.lower().endswith('.pdf'):
         filename += ".pdf"
         
-    pdfurl = selectedfile.get('url') or selectedfile.get('fileUrl') or selectedfile.get('documentUrl') or selectedfile.get('downloadUrl')
-    
-    if not pdfurl:
-        bot.send_message(chatid, "❌ इस फाइल का डाउनलोड लिंक नहीं मिला (यह वीडियो हो सकती है)।")
-        return
-        bot.send_message(chatid, f"⏳ {filename} डाउनलोड होकर चैनल पर भेजी जा रही है...", parse_mode='Markdown')
-    
+    contentid = selectedfile.get('id') or selectedfile.get('_id') or selectedfile.get('contentId') or selectedfile.get('topicId')
+    courseid = usersessions[chatid]['courseid']
     token = usersessions[chatid]['token']
+    
     headers = APIHEADERS.copy()
     headers.update({
         "x-access-token": token,
         "Authorization": f"Bearer {token}"
     })
+    
+    # 1. पहले ऑब्जेक्ट से डाउनलोड URL देखें
+    pdfurl = selectedfile.get('url') or selectedfile.get('fileUrl') or selectedfile.get('documentUrl') or selectedfile.get('downloadUrl')
+    
+    # 2. अगर URL नहीं है, तो API से डायरेक्ट लिंक निकालें
+    if not pdfurl and contentid:
+        try:
+            url_api = f"https://api.classplusapp.com/v2/course/content/url?courseId={courseid}&contentId={contentid}"
+            u_res = requests.get(url_api, headers=headers, timeout=20)
+            u_data = u_res.json()
+            pdfurl = u_data.get('data', {}).get('url') or u_data.get('data', {}).get('fileUrl') or u_data.get('url')
+        except Exception:
+            pass
+
+    if not pdfurl:
+        bot.send_message(chatid, "❌ इस फ़ाइल का डाउनलोड लिंक नहीं मिला (यह वीडियो या टेस्ट हो सकता है)।")
+        return
+        
+    bot.send_message(chatid, f"⏳ {filename} डाउनलोड होकर चैनल पर भेजी जा रही है...", parse_mode='Markdown')
     
     try:
         r = requests.get(pdfurl, headers=headers, stream=True, timeout=600)
@@ -235,7 +248,7 @@ def handleupload(message):
                 caption=f"📚 {filename}\n\nUploaded via PSCLive Bot",
                 timeout=600
             )
-            bot.send_message(chatid, f"✅ सफलता! {filename} चैनल {TARGETCHANNEL} पर भेज दी गई है।\n\n👉 अगली PDF का नंबर भेजें या /start करें।", parse_mode='Markdown')
+            bot.send_message(chatid, f"✅ सफलता! {filename} चैनल {TARGETCHANNEL} पर भेज दी गई है।\n\n👉 अगली फ़ाइल का नंबर भेजें या /start करें।", parse_mode='Markdown')
         else:
             bot.send_message(chatid, f"❌ डाउनलोड विफल: Status {r.status_code}")
             
