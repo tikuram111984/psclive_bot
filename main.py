@@ -35,20 +35,16 @@ def get_headers(token, userid="12913"):
     }
 
 def is_actual_folder(item):
-    # Appx में फोल्डर की सटीक पहचान
-    material_type = str(item.get('material_type', '')).lower()
-    content_type = str(item.get('type', '')).lower()
+    m_type = str(item.get('material_type', '')).lower()
+    c_type = str(item.get('type', '')).lower()
     is_f = item.get('is_folder')
     
     if is_f in [1, '1', True]:
         return True
-    if material_type in ['folder', 'dir', '1']:
+    if m_type in ['folder', 'dir', '1']:
         return True
-    if content_type in ['folder', 'dir', '1']:
+    if c_type in ['folder', 'dir', '1']:
         return True
-    # अगर फाइल लिंक/पाथ पहले से मौजूद है तो वह फोल्डर नहीं है
-    if item.get('download_url') or item.get('pdf_url') or item.get('video_url') or item.get('file_url'):
-        return False
     return False
 
 def get_clean_title(item, default="Content"):
@@ -57,6 +53,26 @@ def get_clean_title(item, default="Content"):
         if val and str(val).strip():
             return str(val).strip()
     return default
+
+def deep_find_url(obj):
+    if isinstance(obj, str):
+        if obj.startswith('http') and ('.pdf' in obj or '.mp4' in obj or '.m3u8' in obj or 'appx.co.in' in obj or 'URLPrefix' in obj):
+            return obj
+    elif isinstance(obj, dict):
+        for key in ['download_url', 'pdf_url', 'video_url', 'path', 'pdf_path', 'url', 'file_url', 'document_url', 'stream_url', 'video_path', 'file']:
+            val = obj.get(key)
+            if isinstance(val, str) and val.startswith('http'):
+                return val
+        for v in obj.values():
+            res = deep_find_url(v)
+            if res:
+                return res
+    elif isinstance(obj, list):
+        for elem in obj:
+            res = deep_find_url(elem)
+            if res:
+                return res
+    return None
 
 @bot.message_handler(commands=['start'])
 def handlestart(message):
@@ -99,7 +115,6 @@ def handletoken(message):
     
     headers = get_headers(token)
     api_url = f"https://psclivepawansirapi.akamai.net.in/get/folder_contentsv3?course_id={courseid}&parent_id=-1&start=0"
-    
     try:
         res = requests.get(api_url, headers=headers, timeout=25)
         raw_json = res.json()
@@ -116,13 +131,13 @@ def handletoken(message):
         usersessions[chatid]['items'] = valid_items
         usersessions[chatid]['step'] = 'WAITING_SELECTION'
         
-        msgtext = "📁 मुख्य फ़ोल्डर्स / सूची:\n\n"
+        msgtext = "📁 मुख्य सूची:\n\n"
         for idx, item in enumerate(valid_items, start=1):
             title = get_clean_title(item, f"Item {idx}")
             icon = "📁" if is_actual_folder(item) else "📄"
             msgtext += f"{idx}. {icon} {title}\n"
             
-        msgtext += "\n👉 खोलने के लिए नंबर भेजें:"
+        msgtext += "\n👉 नंबर भेजें:"
         bot.send_message(chatid, msgtext)
         
     except Exception as e:
@@ -141,7 +156,7 @@ def handleselection(message):
     items = usersessions[chatid].get('items', [])
     
     if idx < 0 or idx >= len(items):
-        bot.send_message(chatid, "❌ गलत नंबर! कृपया लिस्ट में से सही नंबर चुनें।")
+        bot.send_message(chatid, "❌ गलत नंबर! कृपया सही नंबर भेजें।")
         return
         
     selected = items[idx]
@@ -149,9 +164,9 @@ def handleselection(message):
     courseid = usersessions[chatid]['courseid']
     headers = get_headers(token)
     
-    selected_id = selected.get('id') or selected.get('folder_id') or selected.get('content_id') or 0
+    selected_id = selected.get('id') or selected.get('folder_id') or selected.get('content_id') or selected.get('material_id') or 0
 
-    # 1. अगर यूजर ने फ़ोल्डर चुना है
+    # 1. अगर यह फ़ोल्डर है
     if is_actual_folder(selected):
         bot.send_message(chatid, "⏳ फ़ोल्डर खोला जा रहा है...")
         sub_url = f"https://psclivepawansirapi.akamai.net.in/get/folder_contentsv3?course_id={courseid}&parent_id={selected_id}&start=0"
@@ -166,67 +181,57 @@ def handleselection(message):
                 
             usersessions[chatid]['items'] = valid_sub
             
-            msgtext = "📄 फ़ोल्डर के अंदर उपलब्ध फ़ाइलें:\n\n"
+            msgtext = "📄 उपलब्ध फ़ाइलें:\n\n"
             for fidx, item in enumerate(valid_sub, start=1):
                 title = get_clean_title(item, f"File {fidx}")
                 icon = "📁" if is_actual_folder(item) else "📄"
                 msgtext += f"{fidx}. {icon} {title}\n"
                 
-            msgtext += "\n👉 चैनल पर अपलोड करने के लिए फ़ाइल नंबर भेजें:"
+            msgtext += "\n👉 चैनल पर भेजने के लिए फ़ाइल नंबर भेजें:"
             bot.send_message(chatid, msgtext)
         except Exception as e:
-            bot.send_message(chatid, f"❌ फ़ोल्डर लोड करने में एरर: {str(e)}")
+            bot.send_message(chatid, f"❌ लोड एरर: {str(e)}")
         return
 
-    # 2. अगर यूजर ने फ़ाइल (PDF/Video) चुनी है -> डाउनलोड शुरू
+    # 2. अगर यह फ़ाइल है
     file_title = get_clean_title(selected, f"Material_{choice}")
     bot.send_message(chatid, f"⏳ {file_title} का डाउनलोड लिंक निकाला जा रहा है...")
 
-    download_url = (
-        selected.get('download_url') or 
-        selected.get('pdf_url') or 
-        selected.get('video_url') or 
-        selected.get('file_url') or 
-        selected.get('url') or 
-        selected.get('document_url') or
-        selected.get('path')
-    )
+    file_url = deep_find_url(selected)
     
-    # अगर लिस्ट में सीधा लिंक न हो, तो कंटेंट डिटेल API से URL फेच करना
-    if not download_url and selected_id:
-        detail_apis = [
+    # अगर डायरेक्ट लिंक न हो तो Appx के अलग-अलग एंडपॉइंट्स से लिंक निकालना
+    if not file_url and selected_id:
+        endpoints = [
+            f"https://psclivepawansirapi.akamai.net.in/get/single_folder_content?course_id={courseid}&content_id={selected_id}",
             f"https://psclivepawansirapi.akamai.net.in/get/content_details?course_id={courseid}&content_id={selected_id}",
             f"https://psclivepawansirapi.akamai.net.in/get/pdf_details?course_id={courseid}&content_id={selected_id}",
-            f"https://psclivepawansirapi.akamai.net.in/get/video_details?course_id={courseid}&content_id={selected_id}"
-        ]
-        for d_url in detail_apis:
+            f"https://psclivepawansirapi.akamai.net.in/get/course_contents?course_id={courseid}&content_id={selected_id}"
+            ]
+        for ep in endpoints:
             try:
-                d_res = requests.get(d_url, headers=headers, timeout=15).json()
-                d_data = d_res.get('data', {})
-                if isinstance(d_data, dict):
-                    download_url = d_data.get('download_url') or d_data.get('pdf_url') or d_data.get('video_url') or d_data.get('file_url') or d_data.get('url')
-                elif isinstance(d_data, str) and d_data.startswith('http'):
-                    download_url = d_data
-                if download_url:
+                res = requests.get(ep, headers=headers, timeout=15)
+                json_data = res.json()
+                found = deep_find_url(json_data)
+                if found:
+                    file_url = found
                     break
             except Exception:
                 continue
 
-    if not download_url:
-        bot.send_message(chatid, "❌ इस फ़ाइल का डाउनलोड लिंक सर्वर से प्राप्त नहीं हो सका।")
+    if not file_url:
+        bot.send_message(chatid, "❌ इस फ़ाइल का डाउनलोड लिंक नहीं मिला।")
         return
 
-    # फ़ाइल एक्सटेंशन तय करना (PDF या MP4)
-    is_video = any(ext in download_url.lower() for ext in ['.mp4', '.m3u8', 'video']) or selected.get('type') == 'video'
+    is_video = any(ext in file_url.lower() for ext in ['.mp4', '.m3u8', 'video']) or selected.get('type') == 'video'
     ext = ".mp4" if is_video else ".pdf"
     
     if not file_title.lower().endswith(ext):
         file_title += ext
 
-    bot.send_message(chatid, f"⬇️ डाउनलोड करके @mycoures123 पर अपलोड किया जा रहा है: {file_title}")
+    bot.send_message(chatid, f"⬇️ {file_title} डाउनलोड करके चैनल पर भेजी जा रही है...")
     
     try:
-        r = requests.get(download_url, headers=headers, stream=True, timeout=600)
+        r = requests.get(file_url, headers=headers, stream=True, timeout=600)
         if r.status_code == 200:
             file_bytes = io.BytesIO(r.content)
             file_bytes.name = file_title
@@ -260,4 +265,3 @@ threading.Thread(target=runpolling, daemon=True).start()
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port)
-    
